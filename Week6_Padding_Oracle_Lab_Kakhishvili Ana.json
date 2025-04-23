@@ -1,0 +1,163 @@
+{
+  "metadata": {
+    "kernelspec": {
+      "name": "python",
+      "display_name": "Python (Pyodide)",
+      "language": "python"
+    },
+    "language_info": {
+      "codemirror_mode": {
+        "name": "python",
+        "version": 3
+      },
+      "file_extension": ".py",
+      "mimetype": "text/x-python",
+      "name": "python",
+      "nbconvert_exporter": "python",
+      "pygments_lexer": "ipython3",
+      "version": "3.8"
+    }
+  },
+  "nbformat_minor": 5,
+  "nbformat": 4,
+  "cells": [
+    {
+      "id": "490c7730-5e6f-400c-8b2d-fb070976368b",
+      "cell_type": "code",
+      "source": "# Import required libraries\nfrom cryptography.hazmat.primitives import padding\nfrom cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes\n\n# Make sure to define this KEY somewhere above your notebook:\n# KEY = b\"this_is_16_bytes\"\n\ndef padding_oracle(ciphertext: bytes) -> bool:\n    \"\"\"\n    This function simulates a padding oracle.\n    It returns True if the AES-CBC decrypted output has valid PKCS#7 padding.\n    Otherwise, it returns False.\n    \"\"\"\n\n    BLOCK_SIZE = 16  # AES block size in bytes\n\n    # Check if the ciphertext is the correct length (must be multiple of block size)\n    if len(ciphertext) % BLOCK_SIZE != 0:\n        return False  # Invalid length → cannot decrypt\n\n    try:\n        # Split the ciphertext into IV and encrypted content\n        iv = ciphertext[:BLOCK_SIZE]           # First 16 bytes = IV\n        ct = ciphertext[BLOCK_SIZE:]           # The rest is the actual ciphertext\n\n        # Set up AES cipher in CBC mode\n        cipher = Cipher(algorithms.AES(KEY), modes.CBC(iv))\n        decryptor = cipher.decryptor()\n\n        # Decrypt the ciphertext\n        decrypted_data = decryptor.update(ct) + decryptor.finalize()\n\n        # Try to remove the PKCS#7 padding\n        unpadder = padding.PKCS7(BLOCK_SIZE * 8).unpadder()\n        unpadder.update(decrypted_data)\n        unpadder.finalize()  # If padding is wrong, this will raise an exception\n\n        return True  # Padding was valid\n\n    except (ValueError, TypeError):\n        return False  # Padding was invalid\n",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    {
+      "id": "9dbec223-7364-4e90-a24b-cf8c55d8f366",
+      "cell_type": "markdown",
+      "source": "## Task 1 – Understand the Components\n\n### Q1: How does the `padding_oracle()` function check if padding is valid?\n\nThe `padding_oracle()` function decrypts the ciphertext using AES-CBC mode.  \nAfter decryption, it tries to remove the padding using PKCS#7.  \nIf the padding is correct, it succeeds and returns True.  \nIf the padding is invalid, it throws a ValueError or TypeError, which is caught — then the function returns False.  \nThis lets us know whether the padding in the decrypted message is valid or not.",
+      "metadata": {}
+    },
+    {
+      "id": "95d93679-0d55-41de-b77d-34a538cfc425",
+      "cell_type": "markdown",
+      "source": "### Q2: What is the purpose of the IV in CBC mode?\n\nThe IV (Initialization Vector) is used to randomize encryption.  \nIn CBC mode, the IV is XORed with the first plaintext block before it is encrypted.  \nThis helps make sure that even if the same message is encrypted twice, the ciphertext will look different.  \nIt protects against attackers seeing patterns in repeated messages.\n",
+      "metadata": {}
+    },
+    {
+      "id": "743979a2-4adb-449e-93f1-6851725b128e",
+      "cell_type": "markdown",
+      "source": "### Q3: Why must the ciphertext length be a multiple of the block size?\n\nAES works in bl`cks of 16 bytes.  \nIf the ciphertext isn’t a multiple of 16, decryption will not work because AES expects full blocks.  \nAlso, when using padding like PKCS#7, the encrypted data includes padding to make sure the length is correct.",
+      "metadata": {}
+    },
+    {
+      "id": "bda476e9-4699-452d-a01a-4fdabe744adf",
+      "cell_type": "code",
+      "source": "## Task 2 - Implement Block Splitting\ndef split_blocks(data: bytes) -> list[bytes]:\n    \"\"\"\n    Split data into blocks of 16 bytes each (AES block size).\n    \n    Parameters:\n        data (bytes): The input data to split.\n    \n    Returns:\n        list[bytes]: A list of byte blocks, each 16 bytes long.\n    \"\"\"\n    block_size = 16  # AES uses 16-byte blocks\n    return [data[i:i + block_size] for i in range(0, len(data), block_size)]\n",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    {
+      "id": "8fd74fe9-e964-42de-9dc7-3867420f9630",
+      "cell_type": "code",
+      "source": "# Test the function with 32 bytes of data (2 full blocks)\ntest_data = b\"ABCDEFGHIJKLMNOP\" + b\"QRSTUVWXYZ123456\"\nblocks = split_blocks(test_data)\n\nfor i, block in enumerate(blocks):\n    print(f\"Block {i+1}: {block}\")\n    ",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    {
+      "id": "7138c92d-92bf-4349-97f5-85c7011f0989",
+      "cell_type": "code",
+      "source": "## Task 3 -  Implement Single Block Decryption\ndef decrypt_block(prev_block: bytes, target_block: bytes) -> bytes:\n    \"\"\"\n    Decrypt a single block using the padding oracle attack.\n    \n    Parameters:\n        prev_block (bytes): The previous ciphertext block (or IV).\n        target_block (bytes): The ciphertext block we want to decrypt.\n    \n    Returns:\n        bytes: The recovered plaintext block.\n    \"\"\"\n    block_size = 16\n    intermediate = [0] * block_size  # Stores intermediate state (D_k(C_i))\n    plaintext = [0] * block_size     # Final plaintext bytes\n\n    # Start from last byte to the first\n    for byte_index in range(block_size - 1, -1, -1):\n        padding_value = block_size - byte_index\n        \n        # Try all possible byte values (0-255)\n        for guess in range(256):\n            # Build a fake block to force the padding\n            fake_block = bytearray(block_size)\n            \n            # Fill in known intermediate values for padding\n            for i in range(byte_index + 1, block_size):\n                fake_block[i] = intermediate[i] ^ padding_value\n            \n            # Set the current guess for this byte\n            fake_block[byte_index] = guess\n\n            # Combine with target block and send to oracle\n            crafted = bytes(fake_block) + target_block\n            if padding_oracle(crafted):\n                # Found a valid guess! Compute intermediate and plaintext byte\n                intermediate[byte_index] = guess ^ padding_value\n                plaintext[byte_index] = intermediate[byte_index] ^ prev_block[byte_index]\n                break\n\n    return bytes(plaintext)\n\n",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    {
+      "id": "40809ee5-9f77-411b-8600-1ddc3c2edf2e",
+      "cell_type": "code",
+      "source": "## Task 4 - Implement Full Attack\n\ndef padding_oracle_attack(ciphertext: bytes) -> bytes:\n    \"\"\"\n    Perform the padding oracle attack on the full ciphertext.\n    \n    Parameters:\n        ciphertext (bytes): Full ciphertext including IV + encrypted blocks.\n    \n    Returns:\n        bytes: The recovered full plaintext.\n    \"\"\"\n    blocks = split_blocks(ciphertext)\n    recovered_plaintext = b\"\"\n\n    # Start from block 1 (C1), use block 0 (IV) as prev_block\n    for i in range(1, len(blocks)):\n        prev = blocks[i - 1]\n        curr = blocks[i]\n        print(f\"[*] Decrypting block {i}...\")\n        recovered_block = decrypt_block(prev, curr)\n        recovered_plaintext += recovered_block\n\n    return recovered_plaintext\n",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    {
+      "id": "ae684709-33da-4096-aa60-bf0cb74c2c9c",
+      "cell_type": "code",
+      "source": "## Task 5: Implement Plaintext Decoding \n\nfrom cryptography.hazmat.primitives import padding\n\ndef unpad_and_decode(plaintext: bytes) -> str:\n    \"\"\"\n    Removes PKCS#7 padding from the plaintext and decodes it into a UTF-8 string.\n    \n    Parameters:\n        plaintext (bytes): The decrypted plaintext (may include padding)\n    \n    Returns:\n        str: Clean readable string (UTF-8 decoded)\n    \"\"\"\n    block_size = 16  # AES block size (in bytes)\n\n    # Set up unpadder using PKCS#7 with correct block size\n    unpadder = padding.PKCS7(block_size * 8).unpadder()\n    \n    try:\n        # Remove the padding\n        unpadded_data = unpadder.update(plaintext) + unpadder.finalize()\n\n        # Decode bytes to string using UTF-8\n        return unpadded_data.decode('utf-8')\n    \n    except Exception as e:\n        # In case padding or decoding fails\n        return f\"[!] Error during unpad/decode: {e}\"\n",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    {
+      "id": "9b278c88-8306-4955-bc85-3e5e1b139ad2",
+      "cell_type": "code",
+      "source": "CIPHERTEXT_HEX = (\n    \"746869735f69735f31365f6279746573\"\n    \"9404628dcdf3f003482b3b0648bd920b\"\n    \"3f60e13e89fa6950d3340adbbbb41c12\"\n    \"b3d1d97ef97860e9df7ec0d31d13839a\"\n    \"e17b3be8f69921a07627021af16430e1\"\n)",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    {
+      "id": "26883311-bfa0-476a-8d3c-c9d917924168",
+      "cell_type": "code",
+      "source": "# --- LAB SETUP FORb ERRORS) ---\n\nfrom binascii import unhexlify, hexlify\nfrom cryptography.hazmat.primitives import padding\nfrom cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes\n\n# Define AES block size and key\nBLOCK_SIZE = 16\nKEY = b\"this_is_16_bytes\"\n\n# Correct ciphertext (hex encoded, fixed)\nCIPHERTEXT_HEX = (\n    \"746869735f69735f31365f6279746573\"\n    \"9404628dcdf3f003482b3b0648bd920b\"\n    \"3f60e13e89fa6950d3340adbbbb41c12\"\n    \"b3d1d97ef97860e9df7ec0d31d13839a\"\n    \"e17b3be8f69921a07627021af16430e1\"\n)\n",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    {
+      "id": "6c7d520d-483d-429a-97b3-0635bc04ea68",
+      "cell_type": "code",
+      "source": "## Main Execution\n\nfrom binascii import unhexlify\n\n# Final execution block to perform the full attack\nif __name__ == \"__main__\":\n    try:\n        # Convert the hex string to bytes\n        ciphertext = unhexlify(CIPHERTEXT_HEX)\n\n        # Display info\n        print(f\"[*] Ciphertext length: {len(ciphertext)} bytes\")\n        print(f\"[*] IV: {ciphertext[:BLOCK_SIZE].hex()}\")\n\n        # Run the padding oracle attack on the ciphertext\n        recovered = padding_oracle_attack(ciphertext)\n\n        # Show the raw decrypted result\n        print(\"\\n[+] Decryption complete!\")\n        print(f\"Recovered plaintext (raw bytes): {recovered}\")\n        print(f\"Hex: {recovered.hex()}\")\n\n        # Clean the result and decode into a readable string\n        decoded = unpad_and_decode(recovered)\n        print(\"\\nFinal plaintext:\")\n        print(decoded)\n\n    except Exception as e:\n        print(f\"\\n[!] Error occurred during execution: {e}\")",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    {
+      "id": "04df275e-bb15-4a74-a006-40cb194554ca",
+      "cell_type": "code",
+      "source": "",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    {
+      "id": "57c72e8a-157c-4568-bb2b-361d0d8a0e43",
+      "cell_type": "code",
+      "source": "",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    {
+      "id": "444842e6-fd21-46c1-856f-bb91983548ee",
+      "cell_type": "code",
+      "source": "",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    }
+  ]
+}
